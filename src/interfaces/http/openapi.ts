@@ -55,7 +55,8 @@ export const openApiDocument = {
     '/api/v1/credit-applications/{id}': { get: { ...secured, tags: ['Credit analysis'], summary: 'Read a simulation owned by the current user', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }], responses: { ...errorResponses, 200: response('Simulation with source snapshots', data(ref('CreditApplication'))) } } },
     '/health/live': { get: { tags: ['Operations'], responses: { 200: response('Process is alive', { type: 'object', properties: { status: { type: 'string', enum: ['alive'] } } }) } } },
     '/health/ready': { get: { tags: ['Operations'], responses: { 200: response('Process is ready', { type: 'object', properties: { status: { type: 'string', enum: ['ready'] }, storage: { type: 'string', enum: ['memory'] } } }), 503: response('Process is draining', { type: 'object' }) } } },
-    '/version': { get: { tags: ['Operations'], responses: { 200: response('Build identification', { type: 'object', properties: { version: { type: 'string' }, commit: { type: 'string' }, node: { type: 'string' } } }) } } }
+    '/version': { get: { tags: ['Operations'], responses: { 200: response('Build identification', { type: 'object', properties: { version: { type: 'string' }, commit: { type: 'string' }, node: { type: 'string' } } }) } } },
+    '/metrics': { get: { tags: ['Operations'], summary: 'Prometheus metrics exposition', responses: { 200: { description: 'Prometheus formatted metrics', content: { 'text/plain': { schema: { type: 'string' } } } } } } }
   },
   components: {
     securitySchemes: {
