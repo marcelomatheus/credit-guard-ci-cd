@@ -1,0 +1,30 @@
+name: Azure Boards link
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+permissions:
+  contents: read
+concurrency:
+  group: work-item-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  work-item:
+    name: Require an Azure Boards work item
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check for an AB# reference
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          references=$(printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -oE 'AB#[0-9]+' | sort -u | paste -sd ' ' -) || true
+          if [[ -z "$references" ]]; then
+            echo '::error::Link this pull request to an Azure Boards work item by adding AB#<id> to the title or description, for example "Fixes AB#12".'
+            exit 1
+          fi
+          printf 'Linked work items: %s\n' "$references" >> "$GITHUB_STEP_SUMMARY"

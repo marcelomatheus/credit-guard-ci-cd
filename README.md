@@ -166,6 +166,9 @@ The container check asserts Node 22, build revision, readiness, login, customers
 | `quality.yml` | Reusable workflow | Lint, types, tests, coverage, build, dependency audit, actionlint, ShellCheck, Compose validation and real-container smoke test |
 | `deploy.yml` | Push to `main` or manual run on `main` | Quality gates, Docker Hub publication, digest smoke test, image scan and VPS deployment |
 | `rollback.yml` | Manual run on `main` | Restores a retained release through Tailscale |
+| `work-item.yml` | Pull request opened, edited, reopened or updated | Requires an Azure Boards reference such as `AB#12` in the title or description |
+
+Pull requests are linked to Azure Boards issues through the Azure Boards GitHub app. Mention `AB#<id>` to link a work item, or `Fixes AB#<id>` to close it when the pull request is merged into `main`.
 
 External actions and base/runtime images are pinned by SHA or digest. Dependabot proposes dependency, Dockerfile and action updates within the [supported dependency baseline](docs/dependencies.md). Node and its typings remain on major 22, and the TypeScript version follows the installed linter's supported peer range. Docker images include the Git revision, version, SBOM and build provenance. Images are published for `linux/amd64`; use an ARM runner and adjust both build and smoke checks before targeting an ARM VPS.
 
