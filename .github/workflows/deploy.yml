@@ -22,7 +22,7 @@ jobs:
       image_ref: ${{ steps.reference.outputs.image_ref }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Validate Docker Hub configuration
@@ -86,7 +86,7 @@ jobs:
       IMAGE_REF: ${{ needs.publish.outputs.image_ref }}
     steps:
       - name: Checkout release files
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Join the deployment tailnet
