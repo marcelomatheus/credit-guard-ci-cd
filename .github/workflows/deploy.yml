@@ -22,7 +22,7 @@ jobs:
       image_ref: ${{ steps.reference.outputs.image_ref }}
     steps:
       - name: Checkout source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
       - name: Validate Docker Hub configuration
@@ -62,7 +62,7 @@ jobs:
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf 'image_ref=%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_OUTPUT"
-          printf 'Published image: `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Published image: %s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
       - name: Pull and smoke test the published digest
         env:
           IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
@@ -86,7 +86,7 @@ jobs:
       IMAGE_REF: ${{ needs.publish.outputs.image_ref }}
     steps:
       - name: Checkout release files
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           persist-credentials: false
       - name: Join the deployment tailnet
@@ -112,13 +112,13 @@ jobs:
           ssh -F "$HOME/.ssh/credit_config" credit-vps "umask 077; mkdir -p '$VPS_PROJECT_PATH/releases/$release_id'"
           scp -F "$HOME/.ssh/credit_config" "$RUNNER_TEMP/release.tar.gz" "credit-vps:$VPS_PROJECT_PATH/releases/$release_id/release.tar.gz"
           ssh -F "$HOME/.ssh/credit_config" credit-vps "cd '$VPS_PROJECT_PATH/releases/$release_id' && printf '%s  %s\n' '$checksum' release.tar.gz | sha256sum --check --status && tar -xzf release.tar.gz && rm release.tar.gz && bash deploy.sh '$VPS_PROJECT_PATH' '$release_id' '$IMAGE_REF'"
-          printf 'Release: `%s`\nImage: `%s`\n' "$release_id" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Release: %s\nImage: %s\n' "$release_id" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify the public Cloudflare route
         env:
           PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
         run: |
           [[ "$PUBLIC_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+$ ]]
-          for attempt in {1..12}; do
+          for _attempt in {1..12}; do
             if curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/health/ready" > /dev/null && curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/version" | jq --exit-status --arg sha "$GITHUB_SHA" '.commit == $sha' > /dev/null; then
               printf 'Public route verified: %s\n' "$PUBLIC_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
               exit 0
