@@ -1,0 +1,49 @@
+name: Roll back production
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Retained release identifier; leave empty for the previous release
+        required: false
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: pipeline-credit-production
+  cancel-in-progress: false
+jobs:
+  rollback:
+    if: vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    env:
+      VPS_HOST: ${{ vars.VPS_HOST }}
+      VPS_USER: ${{ vars.VPS_USER }}
+      VPS_PROJECT_PATH: ${{ vars.VPS_PROJECT_PATH }}
+      RELEASE_ID: ${{ inputs.release_id }}
+    steps:
+      - name: Checkout deployment tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Join the deployment tailnet
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ vars.VPS_HOST }}
+      - name: Prepare pinned SSH connection
+        env:
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: bash scripts/prepare-ssh.sh
+      - name: Restore and verify retained release
+        run: |
+          [[ -z "$RELEASE_ID" || "$RELEASE_ID" =~ ^[a-f0-9]{40}-[0-9]+-[0-9]+$ ]]
+          ssh -F "$HOME/.ssh/credit_config" credit-vps "bash '$VPS_PROJECT_PATH/current/rollback.sh' '$VPS_PROJECT_PATH' '$RELEASE_ID'"
+          printf 'Rollback completed. Requested release: `%s`\n' "${RELEASE_ID:-previous}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary SSH credentials
+        if: always()
+        run: rm -f "$HOME/.ssh/credit_deploy_key" "$HOME/.ssh/credit_known_hosts" "$HOME/.ssh/credit_config"

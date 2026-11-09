@@ -1,0 +1,140 @@
+name: CI and deploy
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pipeline-credit-production
+  cancel-in-progress: false
+jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+  publish:
+    name: Publish and verify immutable image
+    needs: quality
+    if: vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      image_ref: ${{ steps.reference.outputs.image_ref }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Validate Docker Hub configuration
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+        run: |
+          [[ "$DOCKERHUB_USERNAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+          [[ "$DOCKERHUB_IMAGE" =~ ^[a-z0-9][a-z0-9._-]*$ ]]
+      - name: Authenticate to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Build and publish
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            APP_VERSION=1.0.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+      - name: Capture immutable reference
+        id: reference
+        env:
+          IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'image_ref=%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_OUTPUT"
+          printf 'Published image: `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - name: Pull and smoke test the published digest
+        env:
+          IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
+        run: |
+          docker pull "$IMAGE_REF"
+          bash scripts/test-image.sh "$IMAGE_REF" "$GITHUB_SHA"
+      - name: Scan the published image
+        env:
+          IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --scanners vuln "$IMAGE_REF"
+  deploy:
+    name: Deploy to VPS through Tailscale
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    env:
+      VPS_HOST: ${{ vars.VPS_HOST }}
+      VPS_USER: ${{ vars.VPS_USER }}
+      VPS_PROJECT_PATH: ${{ vars.VPS_PROJECT_PATH }}
+      IMAGE_REF: ${{ needs.publish.outputs.image_ref }}
+    steps:
+      - name: Checkout release files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Join the deployment tailnet
+        uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          ping: ${{ vars.VPS_HOST }}
+      - name: Prepare pinned SSH connection
+        env:
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+        run: bash scripts/prepare-ssh.sh
+      - name: Transfer and deploy the release
+        run: |
+          release_id="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$RUNNER_TEMP/release"
+          cp compose.production.yaml "$RUNNER_TEMP/release/compose.yaml"
+          cp scripts/deploy.sh scripts/rollback.sh scripts/release-common.sh "$RUNNER_TEMP/release/"
+          tar -czf "$RUNNER_TEMP/release.tar.gz" -C "$RUNNER_TEMP/release" .
+          checksum=$(sha256sum "$RUNNER_TEMP/release.tar.gz" | cut -d ' ' -f 1)
+          ssh -F "$HOME/.ssh/credit_config" credit-vps "umask 077; mkdir -p '$VPS_PROJECT_PATH/releases/$release_id'"
+          scp -F "$HOME/.ssh/credit_config" "$RUNNER_TEMP/release.tar.gz" "credit-vps:$VPS_PROJECT_PATH/releases/$release_id/release.tar.gz"
+          ssh -F "$HOME/.ssh/credit_config" credit-vps "cd '$VPS_PROJECT_PATH/releases/$release_id' && printf '%s  %s\n' '$checksum' release.tar.gz | sha256sum --check --status && tar -xzf release.tar.gz && rm release.tar.gz && bash deploy.sh '$VPS_PROJECT_PATH' '$release_id' '$IMAGE_REF'"
+          printf 'Release: `%s`\nImage: `%s`\n' "$release_id" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify the public Cloudflare route
+        env:
+          PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+        run: |
+          [[ "$PUBLIC_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+$ ]]
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/health/ready" > /dev/null && curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/version" | jq --exit-status --arg sha "$GITHUB_SHA" '.commit == $sha' > /dev/null; then
+              printf 'Public route verified: %s\n' "$PUBLIC_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Application passed internal checks, but the public route failed. Inspect Cloudflare Tunnel and Traefik.' >&2
+          exit 1
+      - name: Remove temporary SSH credentials
+        if: always()
+        run: rm -f "$HOME/.ssh/credit_deploy_key" "$HOME/.ssh/credit_known_hosts" "$HOME/.ssh/credit_config"
+  deployment-status:
+    name: Report deployment activation status
+    needs: quality
+    if: vars.DEPLOY_ENABLED != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Explain bootstrap mode
+        run: echo 'CI is active. Configure the documented secrets and variables, then set DEPLOY_ENABLED=true to activate Docker Hub publication and VPS deployment.' >> "$GITHUB_STEP_SUMMARY"

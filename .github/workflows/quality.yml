@@ -1,0 +1,46 @@
+name: Quality gates
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  quality:
+    name: Node 22 quality and container checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Lint, typecheck, test coverage and build
+        run: npm run check
+      - name: Audit runtime dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Validate workflow files
+        run: |
+          npm run verify:workflows
+          bash scripts/install-actionlint.sh "$RUNNER_TEMP/actionlint"
+          "$RUNNER_TEMP/actionlint/actionlint" -color
+      - name: Validate shell scripts
+        run: shellcheck -s bash -x -P scripts scripts/*.sh
+      - name: Validate Compose manifests
+        env:
+          DOMAIN_NAME: credit-api.example.com
+          IMAGE_REF: docker.io/example/pipeline-ci-cd@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+          RUNTIME_ENV_FILE="$PWD/.env" docker compose -f compose.production.yaml config --quiet
+          docker compose --env-file infra/.env.example -f infra/compose.yaml config --quiet
+      - name: Build the Node 22 production image
+        run: docker build --build-arg "GIT_SHA=$GITHUB_SHA" --tag pipeline-credit-api:ci .
+      - name: Test the production image
+        run: bash scripts/test-image.sh pipeline-credit-api:ci "$GITHUB_SHA"

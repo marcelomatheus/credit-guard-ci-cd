@@ -1,0 +1,42 @@
+name: pipeline-credit-api
+services:
+  api:
+    image: ${IMAGE_REF:?IMAGE_REF must be an immutable Docker Hub digest}
+    env_file:
+      - ${RUNTIME_ENV_FILE:?RUNTIME_ENV_FILE must point to the private VPS runtime file}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    cpus: "0.50"
+    mem_limit: 256m
+    pids_limit: 100
+    networks:
+      - proxy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${PROXY_NETWORK:-celo-network}
+      traefik.http.routers.pipeline-credit-api.rule: Host(`${DOMAIN_NAME:?DOMAIN_NAME is required}`)
+      traefik.http.routers.pipeline-credit-api.entrypoints: ${TRAEFIK_ENTRYPOINT:-web}
+      traefik.http.services.pipeline-credit-api.loadbalancer.server.port: "3000"
+      traefik.http.services.pipeline-credit-api.loadbalancer.healthcheck.path: /health/ready
+      traefik.http.services.pipeline-credit-api.loadbalancer.healthcheck.interval: 10s
+      traefik.http.services.pipeline-credit-api.loadbalancer.healthcheck.timeout: 3s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:-celo-network}
