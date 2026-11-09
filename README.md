@@ -142,13 +142,14 @@ Simulations and their idempotency keys share a configurable TTL, defaulting to 2
 
 ```bash
 npm run check
+npm audit --audit-level=moderate
 npm run verify:workflows
 bash scripts/install-actionlint.sh /tmp/credit-actionlint
 /tmp/credit-actionlint/actionlint
 shellcheck -s bash -x -P scripts scripts/*.sh
 ```
 
-The suite covers monetary boundaries and reconciliation, score thresholds, rejection precedence, authentication, role authorization, user isolation, mocked consent, concurrent idempotency, expiry, bounded capacity, malformed input and deployment recovery. Deployment tests simulate the Docker CLI; CI separately builds and smoke-tests a real container.
+The suite covers monetary boundaries and reconciliation, score thresholds, rejection precedence, authentication, role authorization, user isolation, mocked consent, concurrent idempotency, expiry, bounded capacity, malformed input, architecture lint boundaries and deployment recovery. Dependency checks reject locked deprecation markers and mismatched runtime typings. CI audits development and production dependencies at moderate severity or higher. Deployment tests simulate the Docker CLI; CI separately builds and smoke-tests a real container.
 
 ```bash
 docker build --build-arg GIT_SHA="$(git rev-parse HEAD)" --tag credit-api:test .
@@ -166,7 +167,7 @@ The container check asserts Node 22, build revision, readiness, login, customers
 | `deploy.yml` | Push to `main` or manual run on `main` | Quality gates, Docker Hub publication, digest smoke test, image scan and VPS deployment |
 | `rollback.yml` | Manual run on `main` | Restores a retained release through Tailscale |
 
-External actions and base/runtime images are pinned by SHA or digest. Dependabot proposes dependency, Dockerfile and action updates. Docker images include the Git revision, version, SBOM and build provenance. Images are published for `linux/amd64`; use an ARM runner and adjust both build and smoke checks before targeting an ARM VPS.
+External actions and base/runtime images are pinned by SHA or digest. Dependabot proposes dependency, Dockerfile and action updates within the [supported dependency baseline](docs/dependencies.md). Node and its typings remain on major 22, and the TypeScript version follows the installed linter's supported peer range. Docker images include the Git revision, version, SBOM and build provenance. Images are published for `linux/amd64`; use an ARM runner and adjust both build and smoke checks before targeting an ARM VPS.
 
 Each published tag contains the full Git SHA, workflow run ID and attempt. The deployment reference is the registry digest. A published image must pass the digest smoke test and the HIGH/CRITICAL fixable-vulnerability scan before the VPS deploy job can start. A rejected candidate may remain in Docker Hub but is never promoted to the VPS.
 
