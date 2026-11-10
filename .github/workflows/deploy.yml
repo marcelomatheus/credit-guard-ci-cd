@@ -83,7 +83,7 @@ jobs:
       - name: Scan the published image
         env:
           IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
-        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --scanners vuln "$IMAGE_REF"
+        run: bash scripts/scan-image.sh "$IMAGE_REF"
       - name: Promote moving version tags
         env:
           IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}

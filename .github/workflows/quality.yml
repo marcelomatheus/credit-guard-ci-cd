@@ -44,3 +44,5 @@ jobs:
         run: docker build --build-arg "GIT_SHA=$GITHUB_SHA" --tag pipeline-credit-api:ci .
       - name: Test the production image
         run: bash scripts/test-image.sh pipeline-credit-api:ci "$GITHUB_SHA"
+      - name: Scan the production image
+        run: bash scripts/scan-image.sh pipeline-credit-api:ci

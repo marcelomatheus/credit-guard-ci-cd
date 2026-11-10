@@ -15,6 +15,7 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 FROM base AS runtime
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 ARG GIT_SHA=development
 ARG APP_VERSION=1.0.0
 LABEL org.opencontainers.image.title="Mock Credit Analysis API"

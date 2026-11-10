@@ -26,6 +26,14 @@ The explicit npm override selects 11.0.5 for those consumers. It supports Node 2
 
 The production-only audit did not inspect these development packages. CI now audits the complete dependency tree and fails on moderate or higher findings.
 
+## Production image contents
+
+The final image retains Node.js 22, compiled application files, production dependencies and the smoke script. It removes the globally bundled npm package and its npm/npx launchers. Installation and compilation still use npm in separate build stages.
+
+This addresses the ten fixable HIGH findings in the bundled npm dependency tree reported by the image scan: brace-expansion, ip-address, pacote, picomatch and sigstore. A project-level npm audit does not cover that global toolchain. The final service starts directly with `node`, so it does not need npm at runtime.
+
+`scripts/test-image.sh` verifies that npm/npx and the global npm package are absent. `scripts/scan-image.sh` applies the same HIGH/CRITICAL fixable-vulnerability gate to the CI image and to the published digest. The removal does not suppress any scanner findings or change the security threshold.
+
 ## Installation and CI controls
 
 `.npmrc` enables strict engine and peer checks for local and container installs. The Docker dependency stages copy the same configuration used in CI. The lockfile remains committed for reproducible `npm ci` installs.
