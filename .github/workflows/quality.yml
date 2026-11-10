@@ -40,6 +40,12 @@ jobs:
           docker compose config --quiet
           RUNTIME_ENV_FILE="$PWD/.env" docker compose -f compose.production.yaml config --quiet
           docker compose --env-file infra/.env.example -f infra/compose.yaml config --quiet
+          docker compose --env-file infra/observability/.env.example -f infra/observability/compose.yaml config --quiet
+          docker compose --env-file infra/observability/.env.example -f infra/observability/compose.yaml -f infra/observability/compose.local.yaml config --quiet
+      - name: Validate observability configuration
+        run: |
+          jq empty infra/observability/grafana/dashboards/*.json
+          docker run --rm --entrypoint promtool --volume "$PWD/infra/observability:/config:ro" prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2 check config /config/prometheus.yml
       - name: Build the Node 22 production image
         run: docker build --build-arg "GIT_SHA=$GITHUB_SHA" --tag pipeline-credit-api:ci .
       - name: Test the production image
