@@ -16,7 +16,9 @@ cp .env.example .env
 npm run dev
 ```
 
-Open `http://localhost:3000/docs` for Swagger UI and `http://localhost:3000/openapi.json` for the contract.
+Open `http://localhost:3016/docs` for Swagger UI and `http://localhost:3016/openapi.json` for the contract.
+
+The API listens on port 3016 by default. Local Compose binds `127.0.0.1:3016`; production exposes the service only through Traefik on its Docker network.
 
 Run the production build locally with an explicitly loaded environment:
 
@@ -43,7 +45,7 @@ docker compose exec api node scripts/smoke.mjs
 Passwords are stored as scrypt hashes in `src/infrastructure/mocks/fixtures.ts`. These are intentionally published demo credentials. Login also requires the private `x-demo-access-key` header. Use `local-demo-access-key` with the development example, and generate a separate private value in production.
 
 ```bash
-curl --request POST http://localhost:3000/api/v1/auth/login \
+curl --request POST http://localhost:3016/api/v1/auth/login \
   --header 'Content-Type: application/json' \
   --header 'x-demo-access-key: local-demo-access-key' \
   --data '{"email":"analyst@example.test","password":"AnalystDemo!2026"}'
@@ -52,7 +54,7 @@ curl --request POST http://localhost:3000/api/v1/auth/login \
 Use the returned `accessToken` as a bearer token. Tokens expire after 900 seconds by default. There are no refresh tokens or persisted sessions. The current user is resolved from the fixture repository on every authenticated request. The viewer can consult customers and policies; only analysts create simulations. Simulation history is scoped to its creator, so the viewer initially has no simulation history.
 
 ```bash
-curl --request POST http://localhost:3000/api/v1/credit-applications \
+curl --request POST http://localhost:3016/api/v1/credit-applications \
   --header "Authorization: Bearer $ACCESS_TOKEN" \
   --header 'Content-Type: application/json' \
   --header 'Idempotency-Key: demo-simulation-001' \
@@ -154,16 +156,17 @@ The suite covers monetary boundaries and reconciliation, score thresholds, rejec
 ```bash
 docker build --build-arg GIT_SHA="$(git rev-parse HEAD)" --tag credit-api:test .
 bash scripts/test-image.sh credit-api:test "$(git rev-parse HEAD)"
+bash scripts/scan-image.sh credit-api:test
 ```
 
-The container check asserts Node 22, build revision, readiness, login, customers, approval, manual review, rejection, idempotency and retrieval. Runtime credentials are generated only for the test container and are never built into the image.
+The container check asserts Node 22, port 3016, the absence of npm/npx, build revision, readiness, login, customers, approval, manual review, rejection, idempotency and retrieval. Runtime credentials are generated only for the test container and are never built into the image. Both PR checks and publication scan the final image with the same Trivy security gate.
 
 ## Delivery pipeline
 
 | Workflow | Trigger | Behavior |
 | --- | --- | --- |
 | `ci.yml` | Pull request or manual run | Calls reusable quality gates |
-| `quality.yml` | Reusable workflow | Lint, types, tests, coverage, build, dependency audit, actionlint, ShellCheck, Compose validation and real-container smoke test |
+| `quality.yml` | Reusable workflow | Lint, types, tests, coverage, build, dependency audit, actionlint, ShellCheck, Compose validation, real-container smoke test and image vulnerability scan |
 | `deploy.yml` | Push to `main` or manual run on `main` | Quality gates, Docker Hub publication, digest smoke test, image scan and VPS deployment |
 | `rollback.yml` | Manual run on `main` | Restores a retained release through Tailscale |
 

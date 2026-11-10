@@ -31,7 +31,7 @@ activate_release() {
   compose_release "$release" up -d --no-build --pull never --wait --wait-timeout 90 api || return $?
   local revision=${release##*/}
   revision=${revision:0:40}
-  compose_release "$release" exec -T -e BASE_URL=http://127.0.0.1:3000 -e "EXPECTED_SHA=$revision" api node scripts/smoke.mjs || return $?
+  compose_release "$release" exec -T -e "EXPECTED_SHA=$revision" api node --input-type=module -e 'process.env.BASE_URL = "http://127.0.0.1:" + process.env.PORT; await import("./scripts/smoke.mjs")' || return $?
 }
 
 set_pointer() {

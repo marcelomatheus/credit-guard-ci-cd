@@ -21,4 +21,6 @@ for _attempt in {1..45}; do
   sleep 2
 done
 [[ "$healthy" == true ]] || { echo "Image readiness check failed" >&2; exit 1; }
+docker exec "$name" sh -c '! command -v npm && ! command -v npx && test ! -d /usr/local/lib/node_modules/npm'
+docker exec "$name" node --input-type=module -e 'import assert from "node:assert/strict"; assert.equal(process.env.PORT, "3016")'
 docker exec "$name" node scripts/smoke.mjs

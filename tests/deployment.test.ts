@@ -48,6 +48,15 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 if [[ -n "\u0024{FAIL_RELEASE:-}" && "$manifest" == *"$FAIL_RELEASE"* && "$operation" == "\u0024{FAIL_OPERATION:-up}" ]]; then exit 19; fi
+if [[ "\u0024{CHECK_SMOKE_PORT:-}" == true && "$operation" == exec ]]; then
+  while [[ $# -gt 0 && "$1" != api ]]; do shift; done
+  shift
+  port=3016
+  if [[ "$manifest" == *"$LEGACY_RELEASE"* ]]; then port=3000; fi
+  cd "$MOCK_CONTAINER_ROOT" || exit 1
+  PORT="$port" EXPECTED_PORT="$port" "$@"
+  exit $?
+fi
 exit 0
 `);
     chmodSync(join(bin, 'docker'), 0o700);
@@ -122,6 +131,19 @@ exit 0
     expect(readlinkSync(join(root, 'current'))).toBe(join(root, 'releases', previousId));
   });
 
+  it('runs smoke checks on port 3016 and on the runtime port of an older release', () => {
+    const containerRoot = join(root, 'container');
+    mkdirSync(join(containerRoot, 'scripts'), { recursive: true });
+    writeFileSync(join(containerRoot, 'scripts/smoke.mjs'), 'import assert from "node:assert/strict"; assert.equal(process.env.BASE_URL, "http://127.0.0.1:" + process.env.EXPECTED_PORT); console.log(process.env.BASE_URL);');
+    const environment = { CHECK_SMOKE_PORT: 'true', LEGACY_RELEASE: previousId, MOCK_CONTAINER_ROOT: containerRoot };
+    const deployed = invoke('deploy.sh', [candidateId, image], environment);
+    expect(deployed.status, deployed.stderr).toBe(0);
+    expect(deployed.stdout).toContain('http://127.0.0.1:3016');
+    const restored = invoke('rollback.sh', [previousId], environment);
+    expect(restored.status, restored.stderr).toBe(0);
+    expect(restored.stdout).toContain('http://127.0.0.1:3000');
+  });
+
   it('does not execute shell syntax supplied as an image reference', () => {
     const marker = join(root, 'injected');
     const result = invoke('deploy.sh', [candidateId, `$(touch ${marker})`]);
@@ -130,7 +152,7 @@ exit 0
   });
 
   it('keeps every deployment script syntactically valid Bash', () => {
-    for (const script of ['deploy.sh', 'rollback.sh', 'release-common.sh', 'prepare-ssh.sh', 'test-image.sh', 'install-actionlint.sh']) {
+    for (const script of ['deploy.sh', 'rollback.sh', 'release-common.sh', 'prepare-ssh.sh', 'test-image.sh', 'scan-image.sh', 'install-actionlint.sh']) {
       expect(() => execFileSync('bash', ['-n', `scripts/${script}`])).not.toThrow();
     }
   });
