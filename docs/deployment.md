@@ -43,7 +43,9 @@ Put the first secret in `JWT_SECRET` and the second in `DEMO_ACCESS_KEY`. Do not
 
 Obtain the actual network subnet with `docker network inspect celo-network`. Avoid setting `TRUST_PROXY=true` or trusting arbitrary public address ranges. With `loopback` only, all traffic forwarded by Traefik may share one rate-limit identity until the real proxy network is configured.
 
-The application is only attached to the proxy network and publishes no host ports. Isolate unrelated services appropriately. Do not recreate an existing shared network to change its subnet.
+The application listens on internal port 3016, is only attached to the proxy network and publishes no host ports. Its Traefik service label routes to port 3016. Compose sets `PORT=3016` even if an older runtime environment file still contains `PORT=3000`. Local development defaults and the local Compose binding also use 3016.
+
+The public hostname and Cloudflare-to-Traefik origin do not change when the API port changes. Isolate unrelated services appropriately. Do not recreate an existing shared network to change its subnet.
 
 If the Docker Hub repository is private, sign in once as the deployment user with a separate read-only token. Use `docker login --username YOUR_USERNAME --password-stdin` with a private input source. The Actions push token is not copied to the VPS. Keep retained release images locally for recovery.
 

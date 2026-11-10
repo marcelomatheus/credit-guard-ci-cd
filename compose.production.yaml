@@ -6,7 +6,7 @@ services:
       - ${RUNTIME_ENV_FILE:?RUNTIME_ENV_FILE must point to the private VPS runtime file}
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: 3016
     init: true
     restart: unless-stopped
     read_only: true
@@ -27,7 +27,7 @@ services:
       traefik.docker.network: ${PROXY_NETWORK:-celo-network}
       traefik.http.routers.pipeline-credit-api.rule: Host(`${DOMAIN_NAME:?DOMAIN_NAME is required}`)
       traefik.http.routers.pipeline-credit-api.entrypoints: ${TRAEFIK_ENTRYPOINT:-web}
-      traefik.http.services.pipeline-credit-api.loadbalancer.server.port: "3000"
+      traefik.http.services.pipeline-credit-api.loadbalancer.server.port: "3016"
       traefik.http.services.pipeline-credit-api.loadbalancer.healthcheck.path: /health/ready
       traefik.http.services.pipeline-credit-api.loadbalancer.healthcheck.interval: 10s
       traefik.http.services.pipeline-credit-api.loadbalancer.healthcheck.timeout: 3s

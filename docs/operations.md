@@ -8,6 +8,8 @@ Every release has a directory named `<full-git-sha>-<run-id>-<run-attempt>` bene
 
 The application uses one Compose project, `pipeline-credit-api`. Updating it may briefly interrupt requests. There is no blue-green routing or zero-downtime guarantee.
 
+The current API port is 3016. The healthcheck and smoke runner use the container's runtime port; activation scripts derive the smoke URL inside the target container so recovering an older release on port 3000 remains possible with the updated tooling. When switching across the port change, use the updated rollback tooling: older retained scripts may still hardcode port 3000. The Traefik service label is part of each retained Compose manifest and is restored with that release.
+
 ## Automatic rollback
 
 Pull and image-revision checks occur before activation. If container readiness or the internal authenticated smoke test fails, the script starts the previous release, verifies readiness and runs its smoke test. The candidate workflow still fails, even when recovery succeeds.

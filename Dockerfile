@@ -23,7 +23,7 @@ LABEL org.opencontainers.image.source="https://github.com/marcelomatheus/pipelin
 LABEL org.opencontainers.image.revision="${GIT_SHA}"
 LABEL org.opencontainers.image.version="${APP_VERSION}"
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3016
 ENV GIT_SHA=${GIT_SHA}
 ENV APP_VERSION=${APP_VERSION}
 COPY --chown=node:node --from=production-dependencies /app/node_modules ./node_modules
@@ -31,6 +31,6 @@ COPY --chown=node:node --from=build /app/dist ./dist
 COPY --chown=node:node package.json ./package.json
 COPY --chown=node:node scripts/smoke.mjs ./scripts/smoke.mjs
 USER node
-EXPOSE 3000
-HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 CMD ["node", "--input-type=module", "-e", "const r = await fetch('http://127.0.0.1:3000/health/ready', { signal: AbortSignal.timeout(2000) }); if (!r.ok) process.exit(1)"]
+EXPOSE 3016
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 CMD ["node", "--input-type=module", "-e", "const r = await fetch('http://127.0.0.1:' + process.env.PORT + '/health/ready', { signal: AbortSignal.timeout(2000) }); if (!r.ok) process.exit(1)"]
 CMD ["node", "dist/bootstrap/server.js"]

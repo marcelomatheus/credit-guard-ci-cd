@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-const base = (process.env.BASE_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
+const base = (process.env.BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? '3016'}`).replace(/\/$/, '');
 const key = process.env.DEMO_ACCESS_KEY;
 assert.ok(key, 'DEMO_ACCESS_KEY is required');
 
