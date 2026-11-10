@@ -39,6 +39,15 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Resolve SemVer and short commit tags
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          short_sha=${GITHUB_SHA:0:7}
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "package.json version must be MAJOR.MINOR.PATCH" >&2; exit 1; }
+          [[ "$short_sha" =~ ^[a-f0-9]{7}$ ]]
+          printf 'version=%s\nshort_sha=%s\n' "$version" "$short_sha" >> "$GITHUB_OUTPUT"
+          printf 'Version: %s\nTags: %s-%s, %s, latest\n' "$version" "$version" "$short_sha" "$version" >> "$GITHUB_STEP_SUMMARY"
       - name: Build and publish
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
@@ -46,10 +55,12 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          tags: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          tags: |
+            docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:${{ steps.version.outputs.version }}-${{ steps.version.outputs.short_sha }}
+            docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
             GIT_SHA=${{ github.sha }}
-            APP_VERSION=1.0.0
+            APP_VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max
@@ -73,6 +84,14 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
         run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.69.3@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --scanners vuln "$IMAGE_REF"
+      - name: Promote moving version tags
+        env:
+          IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}
+          IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" "$IMAGE_REF"
+          printf 'Promoted %s and latest to %s\n' "$VERSION" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
   deploy:
     name: Deploy to VPS through Tailscale
     needs: publish
