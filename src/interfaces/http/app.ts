@@ -14,6 +14,8 @@ import { creditPolicy } from '../../modules/credit-analysis/domain/credit-policy
 import { applicationQuerySchema, idempotencySchema, loginSchema, simulationSchema } from './schemas.js';
 import { authenticatedUser, errorHandler, requireAnalyst, requireAuthentication, requireDemoAccessKey } from './middleware.js';
 import { openApiDocument } from './openapi.js';
+import { generateMetrics, recordHttpRequest, recordSimulationOutcome } from './metrics.js';
+import { renderHtmlUi } from './ui.js';
 
 export function createApp(configuration: Configuration, container: Container = createContainer(configuration), logger: Logger = createLogger(configuration.LOG_LEVEL)) {
   const app = express();
@@ -28,9 +30,33 @@ export function createApp(configuration: Configuration, container: Container = c
       return id;
     }
   }));
-  app.use(helmet());
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrcAttr: ["'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:']
+      }
+    }
+  }));
+  app.use((request, response, next) => {
+    response.on('finish', () => {
+      recordHttpRequest(request.method, request.route?.path ?? request.path, response.statusCode);
+    });
+    next();
+  });
   app.use((_request, response, next) => { response.setHeader('Cache-Control', 'no-store'); next(); });
   app.use(express.json({ limit: '16kb' }));
+  app.get('/', (_request, response) => {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    response.send(renderHtmlUi());
+  });
+  app.get('/metrics', (_request, response) => {
+    response.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    response.send(generateMetrics());
+  });
   app.get('/health/live', (_request, response) => { response.json({ status: 'alive' }); });
   app.get('/health/ready', (_request, response) => { response.status(ready ? 200 : 503).json({ status: ready ? 'ready' : 'draining', storage: 'memory' }); });
   app.get('/version', (_request, response) => { response.json({ version: configuration.APP_VERSION, commit: configuration.GIT_SHA, node: process.versions.node }); });
@@ -61,6 +87,7 @@ export function createApp(configuration: Configuration, container: Container = c
     const input = simulationSchema.parse(request.body);
     const key = idempotencySchema.parse(request.get('idempotency-key'));
     const result = await container.simulate.execute(input, authenticatedUser(response).id, key);
+    recordSimulationOutcome(result.application.decision.status);
     response.setHeader('Idempotency-Replayed', String(result.replayed));
     response.location(`/api/v1/credit-applications/${result.application.id}`);
     response.status(result.replayed ? 200 : 201).json({ data: result.application });
