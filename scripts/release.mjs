@@ -42,33 +42,100 @@ function tagImage(reference, tag) {
 }
 
 function validate() {
-  assert.equal(environment.GITHUB_REF_TYPE, 'tag', 'Run this workflow on a vMAJOR.MINOR.PATCH tag');
-  const tag = environment.GITHUB_REF_NAME ?? '';
-  assert.ok(tag.startsWith('v') && stableVersion.test(tag.slice(1)), 'Only stable vMAJOR.MINOR.PATCH tags are supported');
-  const version = tag.slice(1);
+  const main = environment.GITHUB_REF_TYPE === 'branch' && environment.GITHUB_REF_NAME === 'main';
+  assert.ok(main || environment.GITHUB_REF_TYPE === 'tag', 'Run this workflow on main or a stable release tag');
   const manifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  const version = manifest.version;
+  assert.match(version, stableVersion, 'Only stable MAJOR.MINOR.PATCH versions are supported');
+  const tag = `v${version}`;
+  if (!main) assert.equal(environment.GITHUB_REF_NAME, tag, 'Git tag and package.json versions differ');
   const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
-  assert.equal(manifest.version, version, 'Git tag and package.json versions differ');
   assert.equal(lock.version, version, 'Git tag and package-lock.json versions differ');
   assert.equal(lock.packages?.['']?.version, version, 'Root lockfile package version differs');
   const revision = run('git', ['rev-parse', 'HEAD']);
   assert.match(revision, revisionPattern);
   assert.equal(revision, environment.GITHUB_SHA, 'Checkout does not match the workflow revision');
-  assert.equal(run('git', ['rev-parse', `refs/tags/${tag}^{commit}`]), revision, 'Git tag has moved');
   run('git', ['merge-base', '--is-ancestor', revision, 'origin/main']);
+  const result = spawnSync('git', ['rev-parse', '--quiet', '--verify', `refs/tags/${tag}^{commit}`], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  assert.ok(result.status === 0 || result.status === 1, 'Unable to inspect the release tag');
+  const existing = result.status === 0 ? result.stdout.trim() : null;
+  if (!main) assert.equal(existing, revision, 'Git tag has moved');
+  const before = environment.BEFORE_SHA;
+  if (main && before && !/^0+$/.test(before)) {
+    assert.match(before, revisionPattern, 'Invalid previous push revision');
+    const previous = JSON.parse(run('git', ['show', `${before}:package.json`]));
+    assert.match(previous.version, stableVersion, 'Previous package version is invalid');
+    if (previous.version !== version) {
+      assert.ok(compareVersions(version, previous.version) > 0, 'The release version must increase');
+      assert.ok(!existing || existing === revision, 'The new version already belongs to another commit');
+    }
+  }
+  const publish = !main || !existing || existing === revision;
+  console.log(publish ? `Release ${tag} selected` : `${tag} already exists; running CI only`);
   output('version', version);
   output('tag', tag);
   output('revision', revision);
+  output('publish', String(publish));
+}
+
+function releaseIdentity() {
+  const version = environment.RELEASE_VERSION ?? '';
+  const revision = environment.RELEASE_SHA ?? '';
+  assert.match(version, stableVersion);
+  assert.match(revision, revisionPattern);
+  return { version, revision, tag: `v${version}` };
 }
 
 function imageContext() {
-  const version = environment.RELEASE_VERSION ?? '';
-  const revision = environment.RELEASE_SHA ?? '';
+  const identity = releaseIdentity();
   const image = environment.IMAGE ?? '';
-  assert.match(version, stableVersion);
-  assert.match(revision, revisionPattern);
   assert.match(image, /^docker\.io\/[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9._-]*$/);
-  return { version, revision, image, tag: `v${version}` };
+  return { ...identity, image };
+}
+
+function repositoryName() {
+  const repository = environment.GITHUB_REPOSITORY ?? '';
+  assert.match(repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
+  return repository;
+}
+
+function remoteTagRevision(repository, tag) {
+  const result = spawnSync('gh', ['api', `repos/${repository}/git/ref/tags/${tag}`], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    assert.match(result.stderr, /HTTP 404/i, 'Unable to inspect the remote Git tag');
+    return null;
+  }
+  let target = JSON.parse(result.stdout).object;
+  for (let depth = 0; depth < 10; depth++) {
+    assert.match(target.sha, revisionPattern, 'Invalid remote Git object');
+    if (target.type === 'commit') return target.sha;
+    assert.equal(target.type, 'tag', 'Release tag must point to a commit');
+    target = JSON.parse(run('gh', ['api', `repos/${repository}/git/tags/${target.sha}`])).object;
+  }
+  throw new Error('Release tag nesting exceeds the supported limit');
+}
+
+function tagRelease() {
+  const { revision, tag } = releaseIdentity();
+  const repository = repositoryName();
+  const existing = remoteTagRevision(repository, tag);
+  if (existing) {
+    assert.equal(existing, revision, 'Refusing to move an existing Git tag');
+    console.log(`Verified existing Git tag ${tag}`);
+    return;
+  }
+  run('gh', ['api', `repos/${repository}/git/refs`, '--method', 'POST', '-f', `ref=refs/tags/${tag}`, '-f', `sha=${revision}`]);
+  assert.equal(remoteTagRevision(repository, tag), revision, 'Created tag does not match the verified commit');
+  console.log(`Created Git tag ${tag}`);
+}
+
+function compareVersions(left, right) {
+  const a = left.split('.').map(BigInt);
+  const b = right.split('.').map(BigInt);
+  const differing = a.findIndex((part, index) => part !== b[index]);
+  return differing < 0 ? 0 : a[differing] > b[differing] ? 1 : -1;
 }
 
 function imageReference(image) {
@@ -109,10 +176,7 @@ function latest() {
   if (previous) {
     const previousVersion = labels(`${image}@${previous}`)['org.opencontainers.image.version'];
     assert.match(previousVersion, stableVersion, 'Latest image has no stable version label');
-    const left = previousVersion.split('.').map(BigInt);
-    const right = version.split('.').map(BigInt);
-    const differing = left.findIndex((part, index) => part !== right[index]);
-    if (differing >= 0 && left[differing] > right[differing]) {
+    if (compareVersions(previousVersion, version) > 0) {
       output('make_latest', 'false');
       return;
     }
@@ -124,8 +188,7 @@ function latest() {
 function publish() {
   const { version, revision, image, tag } = imageContext();
   const reference = imageReference(image);
-  const repository = environment.GITHUB_REPOSITORY ?? '';
-  assert.match(repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
+  const repository = repositoryName();
   const existing = spawnSync('gh', ['release', 'view', tag, '--repo', repository, '--json', 'body,isDraft,isPrerelease'], { encoding: 'utf8' });
   if (existing.error) throw existing.error;
   const commitLine = `Commit: \`${revision}\``;
@@ -152,8 +215,8 @@ function publish() {
 }
 
 try {
-  const commands = { validate, resolve, promote, latest, publish };
-  assert.ok(Object.hasOwn(commands, mode), 'Expected validate, resolve, promote, latest or publish');
+  const commands = { validate, tag: tagRelease, resolve, promote, latest, publish };
+  assert.ok(Object.hasOwn(commands, mode), 'Expected validate, tag, resolve, promote, latest or publish');
   commands[mode]();
 } catch (error) {
   console.error(error.message);

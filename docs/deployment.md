@@ -87,7 +87,7 @@ Create a Docker Hub repository and a write-scoped access token. Configure the fo
 
 Create the `production` environment if you want environment rules or explicit reviewers. The workflow does not add reviewer requirements. Protect `main` with pull requests and required quality checks according to your GitHub plan and repository settings.
 
-If the environment restricts deployment branches and tags, allow release tags matching `v*` as well as `main` for the rollback workflow. Release deployments now run from tags, so a `main`-only environment rule will block them. Protect `v*` Git tags against updates and deletion using repository rulesets. The release workflow requests `contents: write` only in its final job and uses the built-in `GITHUB_TOKEN` to publish release notes. No personal access token is required.
+If the environment restricts deployment branches and tags, allow `main` for automatic release deployments and rollback, and allow `v*` tags for manual release recovery. Protect `v*` Git tags against updates and deletion using repository rulesets. If tag creation is restricted, allow the GitHub Actions integration to create release tags. The workflow requests `contents: write` only in its tag and final release jobs and uses the built-in `GITHUB_TOKEN`. No personal access token or additional secret is required.
 
 `JWT_SECRET`, `DEMO_ACCESS_KEY`, and the Cloudflare Tunnel token stay in the VPS runtime/edge configuration. The deploy workflow never needs their plaintext values. Its authenticated smoke test executes inside the running container, using that container's environment.
 
@@ -99,28 +99,30 @@ Preserve the original hostname so the Traefik `Host(...)` rule matches `DOMAIN_N
 
 ## Activate and verify
 
-Set `DEPLOY_ENABLED=true`. Update the package version and lockfile together in a PR with `npm version patch --no-git-tag-version`, using `minor` or `major` when appropriate. After merging the PR, push an annotated Git tag `v<version>` on the reviewed `main` commit. For example, if the package version is `1.0.1`:
+Set `DEPLOY_ENABLED=true`. Update the package version and lockfile together on a feature branch:
 
 ```bash
-git switch main
-git pull --ff-only
-git tag -a v1.0.1 -m 'Release v1.0.1'
-git push origin v1.0.1
+npm version patch --no-git-tag-version
 ```
 
-This starts **Release and deploy**. A push to `main` runs CI without publishing or deploying. The release validator requires stable `vMAJOR.MINOR.PATCH`, matching package/lockfile versions, and a commit reachable from `main`. Use a new version if the old pipeline already published the same Docker version tag for another commit. The workflow supports lightweight tags too, but annotated tags provide an explicit release message.
+Use `minor` or `major` when appropriate, add notes in `docs/releases/v<version>.md`, and merge the changes through a PR. The merge starts **Release and deploy** on `main`. After quality gates pass, the workflow creates the version tag using `GITHUB_TOKEN` and continues publication and deployment in the same execution. It does not rely on another push event from the automatically created tag.
+
+An already untagged package version is selected for initial publication even when the enabling PR does not change that version. For example, merging this automation with package version `1.2.0` and no `v1.2.0` tag bootstraps the first release. Later merges retaining an already tagged version run CI only. Version changes on main must increase SemVer; a new version already owned by another commit is rejected.
+
+The validator requires stable `MAJOR.MINOR.PATCH`, matching package/lockfile versions, and a commit reachable from `main`. Automatic tags point directly to the reviewed commit; existing manual annotated or lightweight tags are verified and preserved. Use a new version if the old pipeline already published the same Docker version tag for another commit. With `DEPLOY_ENABLED` disabled, quality checks still run and no version tag is created.
 
 The job validates and publishes the candidate, tests the digest and application version, scans it, reserves the Docker version tag, joins Tailscale, verifies SSH, copies the release bundle, pulls the image, checks its revision, starts the service and exercises the running API. After verifying public readiness and the expected commit through Cloudflare, it promotes `latest` unless a newer version already owns it and creates a GitHub Release containing the version, commit and exact Docker digest.
 
-For a transient or VPS configuration failure, correct the cause and use **Re-run failed jobs**. If the entire workflow is restarted, the publication job reuses an already reserved version image only when its commit and version labels match, and tests/scans that digest again. A conflicting Docker version or GitHub Release is rejected. An unsuccessful first candidate may leave its unique build tag in Docker Hub; it is not made `latest` or published as a successful GitHub Release. Once reserved, a version tag retains its digest even if deployment fails.
+For a transient or VPS configuration failure, correct the cause and use **Re-run failed jobs**. Automatic tags remain in place if a later stage fails. If the original workflow is restarted, the tag job verifies the same commit and the publication job reuses an already reserved version image only when its commit and version labels match, then tests/scans that digest again. A conflicting Git tag, Docker version or GitHub Release is rejected. An unsuccessful first candidate may leave its unique build tag in Docker Hub; it is not made `latest` or published as a successful GitHub Release. Once reserved, a version tag retains its digest even if deployment fails.
 
-To dispatch an existing release tag manually:
+To bootstrap the current untagged main version manually, or recover an existing release tag:
 
 ```bash
-gh workflow run deploy.yml --ref v1.0.1
+gh workflow run deploy.yml --ref main
+gh workflow run deploy.yml --ref v1.2.0
 ```
 
-Select the tag, not `main`. Do not delete/recreate release tags to retry a workflow. If deployment already succeeded but GitHub release publication failed, rerun the failed release job. Rolling back production remains a separate manual workflow on `main`; Docker `latest` and GitHub Release history are publication records and are not rewritten by a rollback.
+Choose one command for the intended operation. A main dispatch with an already tagged version at another commit runs CI only; use the original run or the existing tag to retry that release. Do not delete/recreate release tags to retry a workflow. If deployment already succeeded but GitHub release publication failed, rerun the failed release job. Rolling back production remains a separate manual workflow on `main`; Docker `latest` and GitHub Release history are publication records and are not rewritten by a rollback.
 
 The workflow summary identifies the release and Docker Hub digest. The public `/version` response must report the same commit. The first deployment has no prior release available for rollback.
 

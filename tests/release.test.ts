@@ -16,6 +16,8 @@ interface State {
   release?: { body: string; isDraft: boolean; isPrerelease: boolean };
   registryError?: string;
   githubError?: string;
+  gitRefs?: Record<string, { type: string; sha: string }>;
+  tagObjects?: Record<string, { type: string; sha: string }>;
 }
 
 describe('versioned image and GitHub Release orchestration', () => {
@@ -37,7 +39,7 @@ describe('versioned image and GitHub Release orchestration', () => {
         ...process.env, PATH: `${join(root, 'bin')}:${process.env.PATH}`, TEST_STATE: join(root, 'state.json'),
         GITHUB_OUTPUT: join(root, 'output'), GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v1.2.3', GITHUB_SHA: revision,
         GITHUB_REPOSITORY: 'example/credit-api', RELEASE_VERSION: '1.2.3', RELEASE_SHA: revision,
-        IMAGE: image, IMAGE_REF: `${image}@${digest}`, MAKE_LATEST: 'true', ...extra
+        IMAGE: image, IMAGE_REF: `${image}@${digest}`, MAKE_LATEST: 'true', BEFORE_SHA: '', ...extra
       }
     });
     state = JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')) as State;
@@ -78,6 +80,21 @@ if (tool === 'docker') {
   } else if (args[0] === 'image') {
     output = JSON.stringify(state.labels[args[2].split('@')[1]]);
   }
+} else if (args[0] === 'api') {
+  if (state.githubError) error = state.githubError;
+  else if (args[1].includes('/git/ref/tags/')) {
+    const target = (state.gitRefs || {})[args[1].split('/').at(-1)];
+    if (target) output = JSON.stringify({ object: target });
+    else error = 'HTTP 404: Not Found';
+  } else if (args[1].includes('/git/tags/')) {
+    output = JSON.stringify({ object: state.tagObjects[args[1].split('/').at(-1)] });
+  } else if (args[1].endsWith('/git/refs') && args.includes('POST')) {
+    const tag = args.find(value => value.startsWith('ref=refs/tags/')).split('/').at(-1);
+    const sha = args.find(value => value.startsWith('sha=')).slice(4);
+    state.gitRefs = state.gitRefs || {};
+    state.gitRefs[tag] = { type: 'commit', sha };
+    output = JSON.stringify({ object: state.gitRefs[tag] });
+  }
 } else if (args[1] === 'view') {
   if (state.githubError) error = state.githubError;
   else if (state.release) output = JSON.stringify(state.release);
@@ -108,7 +125,7 @@ console.log(output);
     expect(invoke('validate', { GITHUB_REF_NAME: tag }).status).not.toBe(0);
   });
 
-  it('rejects branch dispatches, stale lockfiles and commits outside main', () => {
+  it('rejects unsupported refs, stale lockfiles and commits outside main', () => {
     expect(invoke('validate', { GITHUB_REF_TYPE: 'branch' }).status).not.toBe(0);
     writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ version: '1.2.3', packages: { '': { version: '1.2.2' } } }));
     expect(invoke('validate').status).not.toBe(0);
@@ -119,6 +136,72 @@ console.log(output);
     git(['-c', 'user.name=Test', '-c', 'user.email=test@example.test', '-c', 'commit.gpgsign=false', 'commit', '-m', 'Unmerged change']);
     git(['tag', '-f', 'v1.2.3']);
     expect(invoke('validate', { GITHUB_SHA: git(['rev-parse', 'HEAD']) }).status).not.toBe(0);
+  });
+
+  it('selects the first untagged main version and permits a retry at the tagged commit', () => {
+    const context = { GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main' };
+    expect(invoke('validate', context).output).toContain('publish=true');
+    git(['tag', '-d', 'v1.2.3']);
+    const result = invoke('validate', context);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain('tag=v1.2.3');
+    expect(result.output).toContain('publish=true');
+  });
+
+  it('runs CI only when another main commit retains an already tagged version', () => {
+    const before = revision;
+    git(['-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-m', 'Documentation update']);
+    revision = git(['rev-parse', 'HEAD']);
+    git(['update-ref', 'refs/remotes/origin/main', revision]);
+    const result = invoke('validate', { GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main', BEFORE_SHA: before });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toContain('publish=false');
+  });
+
+  it('selects a version bump merged to main and rejects version decreases or tag collisions', () => {
+    const before = revision;
+    function changeVersion(version: string) {
+      writeFileSync(join(root, 'package.json'), JSON.stringify({ version }));
+      writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ version, packages: { '': { version } } }));
+      git(['add', 'package.json', 'package-lock.json']);
+      git(['-c', 'commit.gpgsign=false', 'commit', '-m', `Version ${version}`]);
+      revision = git(['rev-parse', 'HEAD']);
+      git(['update-ref', 'refs/remotes/origin/main', revision]);
+    }
+    const context = { GITHUB_REF_TYPE: 'branch', GITHUB_REF_NAME: 'main', BEFORE_SHA: before };
+    changeVersion('1.2.4');
+    expect(invoke('validate', context).output).toContain('publish=true');
+    git(['tag', 'v1.2.4', before]);
+    expect(invoke('validate', context).status).not.toBe(0);
+    changeVersion('1.2.2');
+    expect(invoke('validate', context).status).not.toBe(0);
+  });
+
+  it('creates a remote tag once, verifies retries and refuses to move it', () => {
+    const result = invoke('tag');
+    expect(result.status, result.stderr).toBe(0);
+    expect(state.gitRefs!['v1.2.3']).toEqual({ type: 'commit', sha: revision });
+    expect(invoke('tag').status).toBe(0);
+    expect(state.calls.filter(call => call.includes('POST'))).toHaveLength(1);
+    state.gitRefs!['v1.2.3']!.sha = 'f'.repeat(40);
+    expect(invoke('tag').status).not.toBe(0);
+    expect(state.calls.filter(call => call.includes('POST'))).toHaveLength(1);
+    expect(state.calls.some(call => call[0] === 'docker')).toBe(false);
+  });
+
+  it('accepts an existing annotated remote tag pointing to the verified commit', () => {
+    const tagObject = git(['rev-parse', 'refs/tags/v1.2.3']);
+    state.gitRefs = { 'v1.2.3': { type: 'tag', sha: tagObject } };
+    state.tagObjects = { [tagObject]: { type: 'commit', sha: revision } };
+    const result = invoke('tag');
+    expect(result.status, result.stderr).toBe(0);
+    expect(state.calls.some(call => call.includes('POST'))).toBe(false);
+  });
+
+  it('fails without attempting tag creation when GitHub denies access', () => {
+    state.githubError = 'HTTP 403: Resource not accessible';
+    expect(invoke('tag').status).not.toBe(0);
+    expect(state.calls.some(call => call.includes('POST'))).toBe(false);
   });
 
   it('builds only when the version is absent and fails closed on registry errors', () => {
