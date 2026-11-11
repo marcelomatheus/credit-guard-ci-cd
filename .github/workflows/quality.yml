@@ -41,8 +41,12 @@ jobs:
           RUNTIME_ENV_FILE="$PWD/.env" docker compose -f compose.production.yaml config --quiet
           docker compose --env-file infra/.env.example -f infra/compose.yaml config --quiet
       - name: Build the Node 22 production image
-        run: docker build --build-arg "GIT_SHA=$GITHUB_SHA" --tag pipeline-credit-api:ci .
+        run: |
+          version=$(node -p "require('./package.json').version")
+          docker build --build-arg "GIT_SHA=$GITHUB_SHA" --build-arg "APP_VERSION=$version" --tag pipeline-credit-api:ci .
       - name: Test the production image
-        run: bash scripts/test-image.sh pipeline-credit-api:ci "$GITHUB_SHA"
+        run: |
+          version=$(node -p "require('./package.json').version")
+          bash scripts/test-image.sh pipeline-credit-api:ci "$GITHUB_SHA" "$version"
       - name: Scan the production image
         run: bash scripts/scan-image.sh pipeline-credit-api:ci
