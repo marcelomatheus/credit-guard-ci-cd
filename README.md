@@ -119,6 +119,8 @@ Amounts range from 10000 to 10000000 cents; terms range from 1 to 60 months. The
 | GET | `/metrics` | Prometheus metrics |
 | GET | `/openapi.json` | Public OpenAPI document |
 
+The web interface embeds icons from [Phosphor Icons](https://phosphoricons.com) 2.1.1, licensed under the MIT License, as inline SVG in `src/interfaces/http/web/icons.ts`.
+
 List filters: `page`, `limit`, `customerId` and `status`. Errors use `{ "error": { "code", "message", "requestId" } }`, with validation details when relevant. Responses include an application-generated `x-request-id` and disable caching.
 
 The API applies a 16 KB JSON limit, a general limit of 120 API requests per minute per client IP, and 10 login attempts per 15 minutes per IP. When deploying behind a proxy, configure `TRUST_PROXY` for the actual trusted proxy network and make sure the proxy sanitizes forwarded headers.
