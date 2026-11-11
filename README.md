@@ -204,6 +204,6 @@ The repository starts in CI-only mode. Set the repository variable `DEPLOY_ENABL
 
 ## Operations
 
-See [deployment setup and credential mapping](docs/deployment.md), [rollback and troubleshooting](docs/operations.md), and the optional [Traefik and Cloudflare Tunnel example](infra/README.md).
+See [deployment setup and credential mapping](docs/deployment.md), [rollback and troubleshooting](docs/operations.md), the optional [Traefik and Cloudflare Tunnel example](infra/README.md), and the [Prometheus and Grafana observability stack](infra/observability/README.md).
 
 The design follows the Tailscale access, external Docker network and Traefik label pattern in [SP Energia](https://github.com/marcelomatheus/sp-energiasolar-app). It moves build/distribution into GitHub Actions and Docker Hub, adds health validation and application rollback, and removes source checkout from the VPS.
