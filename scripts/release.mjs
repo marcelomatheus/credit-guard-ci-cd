@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -141,7 +141,9 @@ function publish() {
   const directory = mkdtempSync(join(tmpdir(), 'credit-release-'));
   try {
     const notes = join(directory, 'notes.md');
-    writeFileSync(notes, `Version: \`${version}\`\n\n${commitLine}\n\nDocker tag: \`${image}:${version}\`\n\n${imageLine}\n\nThe image passed smoke tests, the vulnerability scan, VPS deployment and public route verification.\n\nPull the exact deployed artifact:\n\n\`\`\`bash\ndocker pull ${reference}\n\`\`\`\n`);
+    const changelog = join('docs', 'releases', `${tag}.md`);
+    const highlights = existsSync(changelog) ? `${readFileSync(changelog, 'utf8').trim()}\n\n## Deployment artifact\n\n` : '';
+    writeFileSync(notes, `${highlights}Version: \`${version}\`\n\n${commitLine}\n\nDocker tag: \`${image}:${version}\`\n\n${imageLine}\n\nThe image passed smoke tests, the vulnerability scan, VPS deployment and public route verification.\n\nPull the exact deployed artifact:\n\n\`\`\`bash\ndocker pull ${reference}\n\`\`\`\n`);
     run('gh', ['release', 'create', tag, '--repo', repository, '--verify-tag', '--title', tag, '--notes-file', notes, `--latest=${environment.MAKE_LATEST === 'true'}`]);
     console.log(`Published release ${tag}`);
   } finally {

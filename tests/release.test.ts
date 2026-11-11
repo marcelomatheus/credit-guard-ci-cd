@@ -174,4 +174,17 @@ console.log(output);
     expect(invoke('publish').status).not.toBe(0);
     expect(state.calls.some(call => call[0] === 'gh' && call.includes('create'))).toBe(false);
   });
+
+  it('includes version-specific release notes before the verified artifact metadata', () => {
+    mkdirSync(join(root, 'docs', 'releases'), { recursive: true });
+    const highlights = '# v1.2.3\n\nFirst release with mock credit analysis.';
+    writeFileSync(join(root, 'docs', 'releases', 'v1.2.3.md'), highlights);
+    writeFileSync(join(root, 'docs', 'releases', 'v1.2.2.md'), 'Older release notes');
+    const result = invoke('publish');
+    expect(result.status, result.stderr).toBe(0);
+    expect(state.release!.body.startsWith(`${highlights}\n\n## Deployment artifact\n\n`)).toBe(true);
+    expect(state.release!.body).toContain(`Commit: \`${revision}\``);
+    expect(state.release!.body).toContain(`Image: \`${image}@${digest}\``);
+    expect(state.release!.body).not.toContain('Older release notes');
+  });
 });
