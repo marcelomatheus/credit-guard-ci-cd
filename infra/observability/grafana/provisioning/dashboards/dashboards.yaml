@@ -1,9 +1,0 @@
-apiVersion: 1
-providers:
-  - name: credit-api
-    folder: Pipeline CI/CD
-    type: file
-    disableDeletion: true
-    allowUiUpdates: false
-    options:
-      path: /etc/grafana/dashboards
