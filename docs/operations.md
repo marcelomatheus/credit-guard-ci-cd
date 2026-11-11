@@ -63,8 +63,10 @@ Logs use JSON and application-generated request IDs. The authorization, cookie a
 | Registry authentication fails | Check namespace, image name and push token; check a separate read token on the VPS for private images |
 | Image scan blocks promotion | Update the pinned base image or vulnerable dependency and rebuild |
 | Release validation rejects a tag | Match stable `vMAJOR.MINOR.PATCH` to both package files and tag a reviewed commit reachable from `main` |
+| A main merge ran CI without CD | If the package version is already tagged at an older commit, bump the package and lockfile version in a PR |
+| Automatic Git tag creation fails | Check the tag job's `contents: write` permission and rules allowing GitHub Actions to create `v*` tags, then rerun the failed job |
 | Docker version already belongs to another commit | Bump the package and lockfile version in a new PR; existing version tags are not overwritten |
-| Deployment from a tag is blocked | Allow `v*` tags in the `production` environment's deployment rules |
+| Deployment ref is blocked | Allow `main` and recovery tags matching `v*` in the `production` environment's deployment rules |
 | GitHub Release publication fails after deploy | Verify the release job's `contents: write` permission, then rerun the failed job; the deployed image digest is retained |
 | Tailscale connects but SSH fails | Check tailnet grants, SSH authentication, noninteractive authorization and exact pinned host name |
 | Host verification fails | Independently verify a legitimate host-key change before updating the stored pin |
