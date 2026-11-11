@@ -5,7 +5,7 @@ export interface PageOptions {
   accessKey: string;
 }
 
-const favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230b63ce'/%3E%3Cpath d='M18 40l9-10 7 6 12-14' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
+const favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230f6b5b'/%3E%3Cpath d='M18 40l9-10 7 6 12-14' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E";
 
 function escapeAttribute(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -31,9 +31,9 @@ function policyRows(): string {
     const upper = index === 0 ? 1000 : creditPolicy.rates[index - 1]!.minimumScore - 1;
     const range = rate.minimumScore === 0 ? `abaixo de ${creditPolicy.minimumScore}` : `${rate.minimumScore} a ${upper}`;
     const [tone, decision] = rate.minimumScore >= creditPolicy.automaticApprovalScore
-      ? ['#1f9d63', 'Aprovação']
-      : rate.minimumScore >= creditPolicy.minimumScore ? ['#d9901a', 'Revisão manual'] : ['#d93a2f', 'Recusa'];
-    return `<tr><td>${range}</td><td><span class="tone" style="background:${tone}"></span>${decision}</td><td class="td-num">${percent(Number(rate.monthlyRate))} a.m.</td></tr>`;
+      ? ['ok', 'Aprovação']
+      : rate.minimumScore >= creditPolicy.minimumScore ? ['warn', 'Revisão manual'] : ['bad', 'Recusa'];
+    return `<tr><td>${range}</td><td><span class="tone tone-${tone}"></span>${decision}</td><td class="td-num">${percent(Number(rate.monthlyRate))} a.m.</td></tr>`;
   }).join('');
 }
 
@@ -234,8 +234,8 @@ export function renderPage(options: PageOptions): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Simulador de análise de crédito com clientes fictícios, usado na demonstração do pipeline de CI/CD.">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#131921" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f3f7f6" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#11251f" media="(prefers-color-scheme: dark)">
   <title>CreditGuard · Simulador de crédito</title>
   <link rel="icon" href="${favicon}">
   <link rel="stylesheet" href="/assets/app.css">
