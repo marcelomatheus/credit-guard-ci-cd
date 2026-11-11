@@ -1,6 +1,8 @@
 name: Release and deploy
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -11,29 +13,52 @@ concurrency:
   cancel-in-progress: false
 jobs:
   validate:
-    name: Validate release tag and package versions
+    name: Select the release version or run CI only
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       revision: ${{ steps.version.outputs.revision }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
-      - name: Checkout tagged source and main history
+      - name: Checkout source, tags and main history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Validate the stable version and reviewed commit
         id: version
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
         run: node scripts/release.mjs validate
   quality:
     needs: validate
     uses: ./.github/workflows/quality.yml
+  tag:
+    name: Create or verify the version tag
+    needs: [validate, quality]
+    if: vars.DEPLOY_ENABLED == 'true' && needs.validate.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout verified release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.validate.outputs.revision }}
+          persist-credentials: false
+      - name: Create the tag and continue this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_SHA: ${{ needs.validate.outputs.revision }}
+        run: node scripts/release.mjs tag
   publish:
     name: Publish and verify immutable image
-    needs: [validate, quality]
-    if: vars.DEPLOY_ENABLED == 'true'
+    needs: [validate, quality, tag]
+    if: vars.DEPLOY_ENABLED == 'true' && needs.validate.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
@@ -205,10 +230,18 @@ jobs:
           node scripts/release.mjs publish
           printf 'GitHub Release: https://github.com/%s/releases/tag/v%s\nImage: %s\n' "$GITHUB_REPOSITORY" "$RELEASE_VERSION" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
   deployment-status:
-    name: Report deployment activation status
-    needs: quality
-    if: vars.DEPLOY_ENABLED != 'true'
+    name: Explain why only CI ran
+    needs: [validate, quality]
+    if: vars.DEPLOY_ENABLED != 'true' || needs.validate.outputs.publish != 'true'
     runs-on: ubuntu-24.04
     steps:
-      - name: Explain bootstrap mode
-        run: echo 'Release validation and CI are active. Configure the documented secrets and variables, then set DEPLOY_ENABLED=true to activate Docker Hub publication, VPS deployment and GitHub Releases.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Report release selection
+        env:
+          DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          if [[ "$DEPLOY_ENABLED" != true ]]; then
+            echo 'CI passed. Configure the documented credentials and set DEPLOY_ENABLED=true to activate automatic version tags, Docker Hub publication, deployment and GitHub Releases.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'CI passed. Version v%s is already tagged. Bump the package and lockfile version in a PR to publish a new release.\n' "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+          fi
