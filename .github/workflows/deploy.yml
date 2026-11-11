@@ -1,8 +1,8 @@
-name: CI and deploy
+name: Release and deploy
 on:
   push:
-    branches:
-      - main
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,20 +10,43 @@ concurrency:
   group: pipeline-credit-production
   cancel-in-progress: false
 jobs:
+  validate:
+    name: Validate release tag and package versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      revision: ${{ steps.version.outputs.revision }}
+    steps:
+      - name: Checkout tagged source and main history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate the stable version and reviewed commit
+        id: version
+        run: node scripts/release.mjs validate
   quality:
+    needs: validate
     uses: ./.github/workflows/quality.yml
   publish:
     name: Publish and verify immutable image
-    needs: quality
-    if: vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    needs: [validate, quality]
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       image_ref: ${{ steps.reference.outputs.image_ref }}
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_SHA: ${{ needs.validate.outputs.revision }}
+      IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}
     steps:
       - name: Checkout source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.validate.outputs.revision }}
           persist-credentials: false
       - name: Validate Docker Hub configuration
         env:
@@ -39,16 +62,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
-      - name: Resolve SemVer and short commit tags
-        id: version
-        run: |
-          version=$(node -p "require('./package.json').version")
-          short_sha=${GITHUB_SHA:0:7}
-          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "package.json version must be MAJOR.MINOR.PATCH" >&2; exit 1; }
-          [[ "$short_sha" =~ ^[a-f0-9]{7}$ ]]
-          printf 'version=%s\nshort_sha=%s\n' "$version" "$short_sha" >> "$GITHUB_OUTPUT"
-          printf 'Version: %s\nTags: %s-%s, %s, latest\n' "$version" "$version" "$short_sha" "$version" >> "$GITHUB_STEP_SUMMARY"
+      - name: Resolve an existing version without replacing its image
+        id: existing
+        run: node scripts/release.mjs resolve
       - name: Build and publish
+        if: steps.existing.outputs.reuse != 'true'
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
@@ -56,11 +74,10 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:${{ steps.version.outputs.version }}-${{ steps.version.outputs.short_sha }}
-            docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+            docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}:sha-${{ needs.validate.outputs.revision }}-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
-            APP_VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ needs.validate.outputs.revision }}
+            APP_VERSION=${{ needs.validate.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max
@@ -68,33 +85,34 @@ jobs:
       - name: Capture immutable reference
         id: reference
         env:
-          IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          REUSED_IMAGE_REF: ${{ steps.existing.outputs.image_ref }}
         run: |
-          [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          printf 'image_ref=%s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_OUTPUT"
-          printf 'Published image: %s@%s\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$REUSED_IMAGE_REF" ]]; then
+            image_ref=$REUSED_IMAGE_REF
+          else
+            [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
+            image_ref="$IMAGE@$DIGEST"
+          fi
+          printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          printf 'Version: %s\nImage: %s\n' "$RELEASE_VERSION" "$image_ref" >> "$GITHUB_STEP_SUMMARY"
       - name: Pull and smoke test the published digest
         env:
           IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
         run: |
           docker pull "$IMAGE_REF"
-          bash scripts/test-image.sh "$IMAGE_REF" "$GITHUB_SHA"
+          bash scripts/test-image.sh "$IMAGE_REF" "$RELEASE_SHA" "$RELEASE_VERSION"
       - name: Scan the published image
         env:
           IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
         run: bash scripts/scan-image.sh "$IMAGE_REF"
-      - name: Promote moving version tags
+      - name: Reserve the verified version tag
         env:
-          IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}
           IMAGE_REF: ${{ steps.reference.outputs.image_ref }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          docker buildx imagetools create --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" "$IMAGE_REF"
-          printf 'Promoted %s and latest to %s\n' "$VERSION" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/release.mjs promote
   deploy:
     name: Deploy to VPS through Tailscale
-    needs: publish
+    needs: [validate, publish]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: production
@@ -103,10 +121,12 @@ jobs:
       VPS_USER: ${{ vars.VPS_USER }}
       VPS_PROJECT_PATH: ${{ vars.VPS_PROJECT_PATH }}
       IMAGE_REF: ${{ needs.publish.outputs.image_ref }}
+      RELEASE_SHA: ${{ needs.validate.outputs.revision }}
     steps:
       - name: Checkout release files
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ needs.validate.outputs.revision }}
           persist-credentials: false
       - name: Join the deployment tailnet
         uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c
@@ -122,7 +142,7 @@ jobs:
         run: bash scripts/prepare-ssh.sh
       - name: Transfer and deploy the release
         run: |
-          release_id="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          release_id="$RELEASE_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -p "$RUNNER_TEMP/release"
           cp compose.production.yaml "$RUNNER_TEMP/release/compose.yaml"
           cp scripts/deploy.sh scripts/rollback.sh scripts/release-common.sh "$RUNNER_TEMP/release/"
@@ -138,7 +158,7 @@ jobs:
         run: |
           [[ "$PUBLIC_BASE_URL" =~ ^https://[a-zA-Z0-9.-]+$ ]]
           for _attempt in {1..12}; do
-            if curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/health/ready" > /dev/null && curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/version" | jq --exit-status --arg sha "$GITHUB_SHA" '.commit == $sha' > /dev/null; then
+            if curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/health/ready" > /dev/null && curl --fail --silent --show-error --max-time 10 "$PUBLIC_BASE_URL/version" | jq --exit-status --arg sha "$RELEASE_SHA" '.commit == $sha' > /dev/null; then
               printf 'Public route verified: %s\n' "$PUBLIC_BASE_URL" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
@@ -149,6 +169,41 @@ jobs:
       - name: Remove temporary SSH credentials
         if: always()
         run: rm -f "$HOME/.ssh/credit_deploy_key" "$HOME/.ssh/credit_known_hosts" "$HOME/.ssh/credit_config"
+  release:
+    name: Publish the verified GitHub Release
+    needs: [validate, publish, deploy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+      RELEASE_SHA: ${{ needs.validate.outputs.revision }}
+      IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_IMAGE }}
+      IMAGE_REF: ${{ needs.publish.outputs.image_ref }}
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.validate.outputs.revision }}
+          persist-credentials: false
+      - name: Authenticate to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - name: Promote latest without downgrading a newer version
+        id: latest
+        run: node scripts/release.mjs latest
+      - name: Publish release notes with the deployed digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAKE_LATEST: ${{ steps.latest.outputs.make_latest }}
+        run: |
+          node scripts/release.mjs publish
+          printf 'GitHub Release: https://github.com/%s/releases/tag/v%s\nImage: %s\n' "$GITHUB_REPOSITORY" "$RELEASE_VERSION" "$IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
   deployment-status:
     name: Report deployment activation status
     needs: quality
@@ -156,4 +211,4 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Explain bootstrap mode
-        run: echo 'CI is active. Configure the documented secrets and variables, then set DEPLOY_ENABLED=true to activate Docker Hub publication and VPS deployment.' >> "$GITHUB_STEP_SUMMARY"
+        run: echo 'Release validation and CI are active. Configure the documented secrets and variables, then set DEPLOY_ENABLED=true to activate Docker Hub publication, VPS deployment and GitHub Releases.' >> "$GITHUB_STEP_SUMMARY"

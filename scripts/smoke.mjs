@@ -16,6 +16,7 @@ await call('/health/ready');
 const version = await call('/version');
 assert.match(version.node, /^22\./);
 if (process.env.EXPECTED_SHA) assert.equal(version.commit, process.env.EXPECTED_SHA);
+if (process.env.EXPECTED_VERSION) assert.equal(version.version, process.env.EXPECTED_VERSION);
 const login = await call('/api/v1/auth/login', {
   method: 'POST',
   headers: { 'content-type': 'application/json', 'x-demo-access-key': key },

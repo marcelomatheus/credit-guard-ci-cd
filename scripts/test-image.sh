@@ -1,6 +1,7 @@
 set -euo pipefail
 image=${1:?Image reference is required}
 revision=${2:?Expected revision is required}
+expected_version=${3:-}
 name="pipeline-credit-test-${RANDOM}-$$"
 cleanup() {
   local result=$?
@@ -12,7 +13,7 @@ trap cleanup EXIT
 JWT_SECRET=$(openssl rand -hex 32)
 DEMO_ACCESS_KEY=$(openssl rand -hex 32)
 export JWT_SECRET DEMO_ACCESS_KEY
-docker run -d --name "$name" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:size=16m,mode=1777 -e JWT_SECRET -e DEMO_ACCESS_KEY -e "EXPECTED_SHA=$revision" "$image" > /dev/null
+docker run -d --name "$name" --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:size=16m,mode=1777 -e JWT_SECRET -e DEMO_ACCESS_KEY -e "EXPECTED_SHA=$revision" -e "EXPECTED_VERSION=$expected_version" "$image" > /dev/null
 healthy=false
 for _attempt in {1..45}; do
   status=$(docker inspect --format '{{.State.Health.Status}}' "$name")
