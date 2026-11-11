@@ -6,7 +6,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets:
-          - pipeline-credit-api-api-1:3000
+          - pipeline-credit-api-api-1:3016
   - job_name: prometheus
     static_configs:
       - targets:

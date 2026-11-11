@@ -8,9 +8,9 @@ services:
       - ../../.env
     environment:
       NODE_ENV: development
-      PORT: 3000
+      PORT: 3016
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3016:3016"
     init: true
     read_only: true
     tmpfs:

@@ -4,7 +4,7 @@ Prometheus scrapes the API's `/metrics` route every 15 seconds over the shared D
 
 | Service | Role | Exposure |
 | --- | --- | --- |
-| `prometheus` | Scrapes `pipeline-credit-api-api-1:3000/metrics` and keeps 7 days of samples | Internal only |
+| `prometheus` | Scrapes `pipeline-credit-api-api-1:3016/metrics` and keeps 7 days of samples | Internal only |
 | `grafana` | Prometheus data source and dashboard provisioned from files | Traefik router on `GRAFANA_DOMAIN` |
 
 Grafana reaches Prometheus through the internal `observability` network using the unique alias `pipeline-credit-prometheus`, so it never collides with other services on the shared proxy network.
@@ -52,8 +52,8 @@ docker compose --env-file infra/observability/.env -f infra/observability/compos
 
 | URL | Content |
 | --- | --- |
-| `http://localhost:3000` | API web interface; create simulations to feed the dashboard |
-| `http://localhost:3000/metrics` | Raw Prometheus metrics |
+| `http://localhost:3016` | API web interface; create simulations to feed the dashboard |
+| `http://localhost:3016/metrics` | Raw Prometheus metrics |
 | `http://localhost:9090/targets` | Prometheus scrape targets; `credit-api` must be `UP` |
 | `http://localhost:3001` | Grafana; the Credit API dashboard opens as the home page |
 
