@@ -170,9 +170,9 @@ The container check asserts Node 22, port 3016, the absence of npm/npx, build re
 
 | Workflow | Trigger | Behavior |
 | --- | --- | --- |
-| `ci.yml` | Pull request or manual run | Calls reusable quality gates |
+| `ci.yml` | Pull request, push to `main` or manual run | Calls reusable quality gates without publishing or deploying |
 | `quality.yml` | Reusable workflow | Lint, types, tests, coverage, build, dependency audit, actionlint, ShellCheck, Compose validation, real-container smoke test and image vulnerability scan |
-| `deploy.yml` | Push to `main` or manual run on `main` | Quality gates, Docker Hub publication, digest smoke test, image scan and VPS deployment |
+| `deploy.yml` | Push of `v*.*.*` or manual run on that tag | Stable-version validation, quality gates, Docker Hub publication, digest tests, VPS deployment and GitHub Release |
 | `rollback.yml` | Manual run on `main` | Restores a retained release through Tailscale |
 | `work-item.yml` | Pull request opened, edited, reopened or updated | Requires an Azure Boards reference such as `AB#12` in the title or description |
 
@@ -180,7 +180,22 @@ Pull requests are linked to Azure Boards issues through the Azure Boards GitHub 
 
 External actions and base/runtime images are pinned by SHA or digest. Dependabot proposes dependency, Dockerfile and action updates within the [supported dependency baseline](docs/dependencies.md). Node and its typings remain on major 22, and the TypeScript version follows the installed linter's supported peer range. Docker images include the Git revision, version, SBOM and build provenance. Images are published for `linux/amd64`; use an ARM runner and adjust both build and smoke checks before targeting an ARM VPS.
 
-Images are tagged with Semantic Versioning and the short Git commit hash. The version comes from `package.json`; bump it manually following `MAJOR.MINOR.PATCH`. Each build publishes the immutable tags `<version>-<short-sha>` and `sha-<full-sha>-<run-id>-<attempt>`. After the digest smoke test and the vulnerability scan pass, the moving tags `<version>` and `latest` are promoted to the same digest, so a rejected candidate never becomes `latest`. Docker tags do not allow the SemVer `+` build metadata separator, so `-` joins the version and the short hash. The `/version` route reports the same version. The deployment reference is the registry digest. A published image must pass the digest smoke test and the HIGH/CRITICAL fixable-vulnerability scan before the VPS deploy job can start. A rejected candidate may remain in Docker Hub but is never promoted to the VPS.
+Release tags use stable Semantic Versioning: Git tag `v1.1.0`, package version `1.1.0`, Docker tag `1.1.0`, `/version` value `1.1.0` and GitHub Release `v1.1.0` identify the same commit and image digest. The tag must point to a commit reachable from `main`, and `package.json`, both root versions in `package-lock.json`, and the Git tag must agree. Prereleases, build metadata and branch-based release dispatches are rejected.
+
+New candidates are built once with `sha-<full-sha>-<run-id>-<attempt>`. After the digest smoke test and HIGH/CRITICAL fixable-vulnerability scan, the workflow reserves `<version>` for that digest and deploys the digest to the VPS. It promotes `latest` and creates the GitHub Release only after internal and public deployment checks pass. Release notes record the exact commit, version tag and deployed digest. `contents: write` is restricted to the final release job; no additional GitHub token secret is needed.
+
+Retries reuse an existing version image only if its revision and version labels match, then repeat the smoke test and scan. A version belonging to another commit or another digest is never overwritten by the workflow. Existing GitHub Releases must already identify the same commit and digest. Releasing an older version never moves Docker `latest` or GitHub's latest-release marker backward. Protect `v*` tags against updates/deletion, and enable Docker Hub immutable tags for stable version tags where available; the workflow guard does not prevent someone from overwriting tags outside the pipeline.
+
+To prepare a release, run `npm version patch --no-git-tag-version` on a feature branch and merge the resulting package and lockfile changes through a PR. Use `minor` or `major` for the appropriate compatibility change. Then tag the reviewed commit, using the exact resulting package version:
+
+```bash
+git switch main
+git pull --ff-only
+git tag -a v1.0.1 -m 'Release v1.0.1'
+git push origin v1.0.1
+```
+
+This example assumes the next package version is `1.0.1`. Do not tag an older commit that lacks the release workflow, reuse a version already published for another commit, or manually create a duplicate GitHub Release: the workflow creates it after deployment. A push to `main` now runs CI only. See [release setup and recovery](docs/deployment.md#activate-and-verify) for environment rules and retry commands.
 
 GitHub-hosted runners check out source for CI and image builds. The VPS receives a small checksummed release bundle by SSH and pulls the application from Docker Hub. It never clones the source or runs an application build. The workflow preserves SSH host verification and can use either Tailscale SSH authorization or a dedicated OpenSSH key over Tailscale.
 
