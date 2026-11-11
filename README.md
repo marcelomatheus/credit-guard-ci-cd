@@ -114,6 +114,9 @@ Amounts range from 10000 to 10000000 cents; terms range from 1 to 60 months. The
 | GET | `/health/ready` | Public readiness and storage mode |
 | GET | `/version` | Public commit and runtime identification |
 | GET | `/docs/` | Public Swagger UI |
+| GET | `/` | Public web interface; login requires the private demo access key |
+| GET | `/assets/app.css`, `/assets/app.js` | Public interface assets, served as files so the content security policy allows no inline scripts |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/openapi.json` | Public OpenAPI document |
 
 List filters: `page`, `limit`, `customerId` and `status`. Errors use `{ "error": { "code", "message", "requestId" } }`, with validation details when relevant. Responses include an application-generated `x-request-id` and disable caching.

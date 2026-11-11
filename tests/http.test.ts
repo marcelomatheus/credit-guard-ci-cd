@@ -6,6 +6,7 @@ import { loadConfiguration } from '../src/infrastructure/config.js';
 import { createContainer } from '../src/bootstrap/container.js';
 import { JwtTokenService } from '../src/infrastructure/security/jwt-token-service.js';
 import type { User } from '../src/modules/identity/domain/user.js';
+import { renderPage } from '../src/interfaces/http/web/page.js';
 
 const environment = { NODE_ENV: 'test', LOG_LEVEL: 'silent', JWT_SECRET: 'test-signing-secret-with-at-least-32-characters', DEMO_ACCESS_KEY: 'test-demo-access-key' };
 const config = loadConfiguration(environment);
@@ -39,6 +40,32 @@ describe('HTTP API', () => {
     expect((await request(instance.app).get('/docs/')).status).toBe(200);
     instance.markDraining();
     expect((await request(instance.app).get('/health/ready')).status).toBe(503);
+  });
+
+  it('serves the web interface from external assets under a strict script policy', async () => {
+    const page = await request(instance.app).get('/');
+    expect(page.status).toBe(200);
+    expect(page.headers['content-type']).toMatch(/^text\/html/);
+    expect(page.text).toContain('<script src="/assets/app.js" defer></script>');
+    expect(page.text).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/);
+    expect(page.text).not.toMatch(/\son[a-z]+=/i);
+    expect(page.text).toContain(`value="${config.DEMO_ACCESS_KEY}"`);
+    const policy = page.headers['content-security-policy'] as string;
+    expect(policy).toContain("script-src 'self'");
+    expect(policy).toContain("script-src-attr 'none'");
+    expect(policy).not.toMatch(/script-src[^;]*unsafe-inline/);
+    const css = await request(instance.app).get('/assets/app.css');
+    expect(css.headers['content-type']).toMatch(/^text\/css/);
+    expect(css.text).toContain('--accent');
+    const js = await request(instance.app).get('/assets/app.js');
+    expect(js.headers['content-type']).toMatch(/^(text|application)\/javascript/);
+    expect(js.text).toContain('x-demo-access-key');
+    expect(js.text).not.toContain(config.DEMO_ACCESS_KEY);
+  });
+
+  it('leaves the access key empty in production pages and escapes supplied values', () => {
+    expect(renderPage({ accessKey: '' })).toMatch(/id="loginAccessKey"[^>]*value=""/);
+    expect(renderPage({ accessKey: 'a"<b>&c' })).toContain('value="a&quot;&lt;b&gt;&amp;c"');
   });
 
   it('requires the private demo gate before accepting public mock credentials', async () => {
