@@ -15,7 +15,9 @@ import { applicationQuerySchema, idempotencySchema, loginSchema, simulationSchem
 import { authenticatedUser, errorHandler, requireAnalyst, requireAuthentication, requireDemoAccessKey } from './middleware.js';
 import { openApiDocument } from './openapi.js';
 import { generateMetrics, recordHttpRequest, recordSimulationOutcome } from './metrics.js';
-import { renderHtmlUi } from './ui.js';
+import { renderPage } from './web/page.js';
+import { styles } from './web/styles.js';
+import { script } from './web/script.js';
 
 export function createApp(configuration: Configuration, container: Container = createContainer(configuration), logger: Logger = createLogger(configuration.LOG_LEVEL)) {
   const app = express();
@@ -34,8 +36,9 @@ export function createApp(configuration: Configuration, container: Container = c
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrcAttr: ["'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        scriptSrcAttr: ["'none'"],
+        connectSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:']
       }
@@ -49,9 +52,15 @@ export function createApp(configuration: Configuration, container: Container = c
   });
   app.use((_request, response, next) => { response.setHeader('Cache-Control', 'no-store'); next(); });
   app.use(express.json({ limit: '16kb' }));
+  const page = renderPage({ accessKey: configuration.NODE_ENV === 'production' ? '' : configuration.DEMO_ACCESS_KEY });
   app.get('/', (_request, response) => {
-    response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.send(renderHtmlUi());
+    response.type('html').send(page);
+  });
+  app.get('/assets/app.css', (_request, response) => {
+    response.type('css').send(styles);
+  });
+  app.get('/assets/app.js', (_request, response) => {
+    response.type('js').send(script);
   });
   app.get('/metrics', (_request, response) => {
     response.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
