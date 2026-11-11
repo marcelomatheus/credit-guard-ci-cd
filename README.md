@@ -168,7 +168,7 @@ The container check asserts Node 22, port 3016, the absence of npm/npx, build re
 
 ## Delivery pipeline
 
-The first release is documented in [v1.2.0 release notes](docs/releases/v1.2.0.md). For each release, add `docs/releases/v<version>.md` to include human-written notes in the GitHub Release. The pipeline appends the verified commit, Docker version tag and deployed digest automatically. Versions without a notes file retain the generated artifact notes.
+Release notes: [v1.3.0 — interface colors](docs/releases/v1.3.0.md) and [v1.2.0 — first release](docs/releases/v1.2.0.md). For each release, add `docs/releases/v<version>.md` to include human-written notes in the GitHub Release. The pipeline appends the verified commit, Docker version tag and deployed digest automatically. Versions without a notes file retain the generated artifact notes.
 
 | Workflow | Trigger | Behavior |
 | --- | --- | --- |
